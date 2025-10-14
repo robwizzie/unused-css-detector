@@ -1,0 +1,208 @@
+{
+    "name": "unused-css-detector",
+    "displayName": "Unused CSS Detector",
+    "description": "Find and remove unused CSS by checking HTML files that link to your CSS and their associated JavaScript files",
+    "version": "1.0.0",
+    "publisher": "MindGoblin Development",
+    "author": {
+        "name": "Rob Wiscount",
+        "email": "robertwiscount@gmail.com",
+        "url": "https://robwiscount.org"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/robwiscount/unused-css-detector"
+    },
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Linters",
+        "Formatters",
+        "Other"
+    ],
+    "keywords": [
+        "css",
+        "scss",
+        "sass",
+        "less",
+        "unused",
+        "cleanup",
+        "lint",
+        "tailwind",
+        "bootstrap"
+    ],
+    "activationEvents": [
+        "onLanguage:css",
+        "onLanguage:scss",
+        "onLanguage:sass",
+        "onLanguage:less"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [{
+                "command": "unused-css-detector.scanCurrentFile",
+                "title": "Find Unused CSS in Current File",
+                "category": "CSS"
+            },
+            {
+                "command": "unused-css-detector.scanProject",
+                "title": "Find Unused CSS in Entire Project",
+                "category": "CSS"
+            },
+            {
+                "command": "unused-css-detector.removeUnusedPreview",
+                "title": "Remove Unused CSS (Preview First)",
+                "category": "CSS"
+            },
+            {
+                "command": "unused-css-detector.removeUnusedHighConfidence",
+                "title": "Remove High-Confidence Unused CSS",
+                "category": "CSS"
+            },
+            {
+                "command": "unused-css-detector.clearCache",
+                "title": "Clear Cache",
+                "category": "CSS"
+            },
+            {
+                "command": "unused-css-detector.showReport",
+                "title": "Show Unused CSS Report",
+                "category": "CSS"
+            }
+        ],
+        "configuration": {
+            "title": "Unused CSS Detector",
+            "properties": {
+                "unusedCssDetector.scanMode": {
+                    "type": "string",
+                    "enum": [
+                        "linked-files-only",
+                        "all-project-files"
+                    ],
+                    "default": "linked-files-only",
+                    "description": "How to scan for CSS usage:\n- 'linked-files-only': Only check HTML files that link to the CSS, and JS files linked from those HTML files (RECOMMENDED)\n- 'all-project-files': Check all HTML and JS files in the project"
+                },
+                "unusedCssDetector.fallbackToAllFiles": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "If no HTML files link to the CSS file, scan all HTML files in the project as a fallback"
+                },
+                "unusedCssDetector.scanFileTypes": {
+                    "type": "array",
+                    "default": [
+                        "html",
+                        "htm",
+                        "js",
+                        "jsx",
+                        "ts",
+                        "tsx",
+                        "php",
+                        "mjs"
+                    ],
+                    "description": "File extensions to scan for CSS usage"
+                },
+                "unusedCssDetector.cssFileTypes": {
+                    "type": "array",
+                    "default": [
+                        "css",
+                        "scss",
+                        "sass",
+                        "less"
+                    ],
+                    "description": "CSS file types to analyze"
+                },
+                "unusedCssDetector.excludePaths": {
+                    "type": "array",
+                    "default": [
+                        "**/node_modules/**",
+                        "**/dist/**",
+                        "**/build/**",
+                        "**/*.min.css",
+                        "**/*.min.js",
+                        "**/vendor/**"
+                    ],
+                    "description": "Glob patterns for files to exclude from scanning"
+                },
+                "unusedCssDetector.ignorePrefixes": {
+                    "type": "array",
+                    "default": [
+                        "wp-",
+                        "bs-"
+                    ],
+                    "description": "CSS class prefixes to ignore (e.g., WordPress 'wp-', Bootstrap 'bs-')"
+                },
+                "unusedCssDetector.ignoreUtilityFrameworks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Ignore utility framework classes (Tailwind, Bootstrap, etc.)"
+                },
+                "unusedCssDetector.tailwindSupport": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Detect and ignore Tailwind CSS classes"
+                },
+                "unusedCssDetector.detectDynamicPatterns": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Detect and ignore dynamically generated class patterns (e.g., btn-${type})"
+                },
+                "unusedCssDetector.showProblemsPanel": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show unused CSS in the Problems panel"
+                },
+                "unusedCssDetector.problemSeverity": {
+                    "type": "string",
+                    "enum": [
+                        "error",
+                        "warning",
+                        "information",
+                        "hint"
+                    ],
+                    "default": "warning",
+                    "description": "Severity level for unused CSS problems"
+                },
+                "unusedCssDetector.showReportPanel": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically show the HTML report panel after scanning"
+                },
+                "unusedCssDetector.showNotification": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show notification message after scanning"
+                },
+                "unusedCssDetector.showOutputChannel": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically show the Output channel log after scanning"
+                },
+                "unusedCssDetector.createBackup": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Create backup before removing CSS"
+                },
+                "unusedCssDetector.autoScanOnSave": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically scan CSS file when saved"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "lint": "eslint src --ext ts"
+    },
+    "devDependencies": {
+        "@types/node": "^16.x",
+        "@types/vscode": "^1.80.0",
+        "@typescript-eslint/eslint-plugin": "^5.x",
+        "@typescript-eslint/parser": "^5.x",
+        "eslint": "^8.x",
+        "typescript": "^5.x"
+    }
+}
