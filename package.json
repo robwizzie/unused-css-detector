@@ -3,16 +3,16 @@
     "displayName": "Unused CSS Detector",
     "description": "Find and remove unused CSS by checking HTML files that link to your CSS and their associated JavaScript files",
     "version": "1.0.0",
-    "publisher": "MindGoblin Development",
+    "publisher": "robwizzie",
     "author": {
         "name": "Rob Wiscount",
         "email": "robertwiscount@gmail.com",
         "url": "https://robwiscount.org"
     },
-    "icon": "icon.png",
+    "icon": "images/icon.png",
     "repository": {
         "type": "git",
-        "url": "https://github.com/robwiscount/unused-css-detector"
+        "url": "https://github.com/robwizzie/unused-css-detector"
     },
     "engines": {
         "vscode": "^1.80.0"
