@@ -432,8 +432,6 @@ MIT License - See [LICENSE](LICENSE) file for details
 
 Built for developers who care about clean, maintainable code.
 
-Special thanks to the Foley Prep team for testing and feedback.
-
 ---
 
 **Enjoy cleaner CSS!** 🎨✨
