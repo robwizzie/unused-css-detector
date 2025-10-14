@@ -9,6 +9,7 @@
         "email": "robertwiscount@gmail.com",
         "url": "https://robwiscount.org"
     },
+    "icon": "icon.png",
     "repository": {
         "type": "git",
         "url": "https://github.com/robwiscount/unused-css-detector"
