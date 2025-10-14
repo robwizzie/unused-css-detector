@@ -171,84 +171,105 @@ export class CSSScanner {
 	}
 
 	private extractSelectorsFromCSS(cssContent: string, filePath: string): SelectorInfo[] {
-		const selectors: SelectorInfo[] = [];
-
-		// Remove comments
-		cssContent = cssContent.replace(/\/\*[\s\S]*?\*\//g, '');
-
-		// Remove @keyframes
-		cssContent = cssContent.replace(/@keyframes[^{]+\{(?:[^{}]|\{[^{}]*\})*\}/g, '');
-
-		const lines = cssContent.split('\n');
-
-		for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-			const line = lines[lineNum];
-
-			// Match class selectors - but ONLY at start of line or after whitespace/comma/brace
-			const classRegex = /(^|[\s,{>\+~])\.([a-zA-Z_][\w-]*)/g;
-			let match;
-
-			while ((match = classRegex.exec(line)) !== null) {
-				const className = match[2]; // Now group 2 because of leading char
-				const column = match.index + match[1].length; // Adjust for leading char
-
-				// Check if it's followed by a pseudo-class or pseudo-element
-				const restOfLine = line.substring(match.index + match[0].length);
-				if (restOfLine.match(/^(::|:)/)) {
-					continue;
-				}
-
-				// Skip if it looks like a CSS value (has units or is part of a URL)
-				if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms)$/)) {
-					continue;
-				}
-
-				selectors.push({
-					name: className,
-					type: 'class',
-					line: lineNum + 1,
-					column: column,
-					fullSelector: '.' + className
-				});
-			}
-
-			// Match ID selectors - but ONLY at start of line or after whitespace/comma/brace
-			// Skip hex colors
-			const idRegex = /(^|[\s,{>\+~])#([a-zA-Z_][\w-]+)/g;
-			while ((match = idRegex.exec(line)) !== null) {
-				const idName = match[2]; // Now group 2
-				const column = match.index + match[1].length;
-
-				const restOfLine = line.substring(match.index + match[0].length);
-				if (restOfLine.match(/^(::|:)/)) {
-					continue;
-				}
-
-				// Skip if it looks like a hex color (any length of hex digits)
-				if (idName.match(/^[0-9a-fA-F]+$/)) {
-				  continue;
-				}
-
-				selectors.push({
-					name: idName,
-					type: 'id',
-					line: lineNum + 1,
-					column: column,
-					fullSelector: '#' + idName
-				});
-			}
-		}
-
-		// Remove duplicates
-		const unique = new Map<string, SelectorInfo>();
-		for (const sel of selectors) {
-			const key = `${sel.type}-${sel.name}`;
-			if (!unique.has(key)) {
-				unique.set(key, sel);
-			}
-		}
-
-		return Array.from(unique.values());
+	  const selectors: SelectorInfo[] = [];
+	  
+	  // DON'T remove comments or modify content - work with original
+	  const originalContent = cssContent;
+	  const lines = originalContent.split('\n');
+	  
+	  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+	    const line = lines[lineNum];
+	    const lineStartOffset = lines.slice(0, lineNum).join('\n').length + (lineNum > 0 ? 1 : 0);
+	    
+	    // Skip lines that are inside comments
+	    const beforeLine = lines.slice(0, lineNum).join('\n');
+	    const openComments = (beforeLine.match(/\/\*/g) || []).length;
+	    const closeComments = (beforeLine.match(/\*\//g) || []).length;
+	    const isInComment = openComments > closeComments;
+	    
+	    // Also check if this specific line has a comment
+	    const lineCommentStart = line.indexOf('/*');
+	    const lineCommentEnd = line.indexOf('*/');
+	    
+	    if (isInComment && lineCommentEnd === -1) {
+	      continue; // Skip lines inside multi-line comments
+	    }
+	    
+	    // Match class selectors
+	    const classRegex = /(^|[\s,{>\+~])\.([a-zA-Z_][\w-]*)/g;
+	    let match;
+	    
+	    while ((match = classRegex.exec(line)) !== null) {
+	      const className = match[2];
+	      const matchStart = match.index + match[1].length; // Position of the dot
+	      
+	      // Skip if inside a comment on this line
+	      if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
+	        continue;
+	      }
+	      
+	      // Check if it's followed by a pseudo-class or pseudo-element
+	      const afterMatch = line.substring(match.index + match[0].length);
+	      if (afterMatch.match(/^(::|:)/)) {
+	        continue;
+	      }
+	      
+	      // Skip if it looks like a CSS value (has units)
+	      if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms|fr)$/)) {
+	        continue;
+	      }
+	      
+	      selectors.push({
+	        name: className,
+	        type: 'class',
+	        line: lineNum + 1,
+	        column: matchStart,
+	        fullSelector: '.' + className
+	      });
+	    }
+	    
+	    // Match ID selectors
+	    const idRegex = /(^|[\s,{>\+~])#([a-zA-Z_][\w-]+)/g;
+	    
+	    while ((match = idRegex.exec(line)) !== null) {
+	      const idName = match[2];
+	      const matchStart = match.index + match[1].length; // Position of the hash
+	      
+	      // Skip if inside a comment on this line
+	      if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
+	        continue;
+	      }
+	      
+	      const afterMatch = line.substring(match.index + match[0].length);
+	      if (afterMatch.match(/^(::|:)/)) {
+	        continue;
+	      }
+	      
+	      // Skip if it looks like a hex color (any length of hex digits)
+	      if (idName.match(/^[0-9a-fA-F]+$/)) {
+	        continue;
+	      }
+	      
+	      selectors.push({
+	        name: idName,
+	        type: 'id',
+	        line: lineNum + 1,
+	        column: matchStart,
+	        fullSelector: '#' + idName
+	      });
+	    }
+	  }
+	  
+	  // Remove duplicates
+	  const unique = new Map<string, SelectorInfo>();
+	  for (const sel of selectors) {
+	    const key = `${sel.type}-${sel.name}`;
+	    if (!unique.has(key)) {
+	      unique.set(key, sel);
+	    }
+	  }
+	  
+	  return Array.from(unique.values());
 	}
 
 	private shouldSkipSelector(selector: SelectorInfo): boolean {
