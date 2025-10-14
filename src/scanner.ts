@@ -187,17 +187,22 @@ export class CSSScanner {
 		for (let lineNum = 0; lineNum < lines.length; lineNum++) {
 			const line = lines[lineNum];
 
-			// Match class selectors
-			const classRegex = /\.([a-zA-Z0-9_-]+)/g;
+			// Match class selectors - but ONLY at start of line or after whitespace/comma/brace
+			const classRegex = /(^|[\s,{>\+~])\.([a-zA-Z_][\w-]*)/g;
 			let match;
 
 			while ((match = classRegex.exec(line)) !== null) {
-				const className = match[1];
-				const column = match.index;
+				const className = match[2]; // Now group 2 because of leading char
+				const column = match.index + match[1].length; // Adjust for leading char
 
 				// Check if it's followed by a pseudo-class or pseudo-element
 				const restOfLine = line.substring(match.index + match[0].length);
 				if (restOfLine.match(/^(::|:)/)) {
+					continue;
+				}
+
+				// Skip if it looks like a CSS value (has units or is part of a URL)
+				if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms)$/)) {
 					continue;
 				}
 
@@ -206,18 +211,24 @@ export class CSSScanner {
 					type: 'class',
 					line: lineNum + 1,
 					column: column,
-					fullSelector: match[0]
+					fullSelector: '.' + className
 				});
 			}
 
-			// Match ID selectors
-			const idRegex = /#([a-zA-Z0-9_-]+)/g;
+			// Match ID selectors - but ONLY at start of line or after whitespace/comma/brace
+			// Skip hex colors
+			const idRegex = /(^|[\s,{>\+~])#([a-zA-Z_][\w-]+)/g;
 			while ((match = idRegex.exec(line)) !== null) {
-				const idName = match[1];
-				const column = match.index;
+				const idName = match[2]; // Now group 2
+				const column = match.index + match[1].length;
 
 				const restOfLine = line.substring(match.index + match[0].length);
 				if (restOfLine.match(/^(::|:)/)) {
+					continue;
+				}
+
+				// Skip if it looks like a hex color (3 or 6 hex digits)
+				if (idName.match(/^[0-9a-fA-F]{3}$/) || idName.match(/^[0-9a-fA-F]{6}$/)) {
 					continue;
 				}
 
@@ -226,7 +237,7 @@ export class CSSScanner {
 					type: 'id',
 					line: lineNum + 1,
 					column: column,
-					fullSelector: match[0]
+					fullSelector: '#' + idName
 				});
 			}
 		}
@@ -356,7 +367,7 @@ export class CSSScanner {
 
 		if (selector.type === 'class') {
 			const patterns = [
-				// JavaScript
+				// Direct class usage patterns
 				new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
 				new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
 				new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
@@ -367,19 +378,32 @@ export class CSSScanner {
 				// React/JSX className
 				new RegExp(`className=\\{?["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]\\}?`, 'g'),
 
-				// PHP
-				new RegExp(`class=["'][^"']*<?php[^>]*?>?[^"']*\\b${escapedName}\\b[^"']*["']`, 'g'),
-
-				// String literals
+				// String literals (any quote type)
 				new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
 
 				// setAttribute
-				new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g')
+				new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g'),
+
+				// ⭐ KEY FIX: HTML class attribute in any string (including template literals)
+				// This catches: class="nav__logo" or class='nav__logo' anywhere in the file
+				new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
+
+				// ⭐ Also match with spaces/newlines in template literals
+				new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
 			];
 
 			return patterns.some(p => p.test(content));
 		} else {
-			const patterns = [new RegExp(`getElementById\\(['"]${escapedName}['"]\\)`, 'g'), new RegExp(`querySelector\\(['"]#${escapedName}['"]\\)`, 'g'), new RegExp(`\\$\\(['"]#${escapedName}['"]\\)`, 'g'), new RegExp(`id=["']${escapedName}["']`, 'g')];
+			// ID selectors
+			const patterns = [
+				new RegExp(`getElementById\\(['"]${escapedName}['"]\\)`, 'g'),
+				new RegExp(`querySelector\\(['"]#${escapedName}['"]\\)`, 'g'),
+				new RegExp(`\\$\\(['"]#${escapedName}['"]\\)`, 'g'),
+
+				// ⭐ KEY FIX: HTML id attribute in any string
+				new RegExp(`id=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
+				new RegExp(`id=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
+			];
 
 			return patterns.some(p => p.test(content));
 		}
@@ -572,6 +596,51 @@ export class CSSScanner {
 
 						if (await this.fileExists(jsPath)) {
 							jsFiles.add(jsPath);
+						}
+					}
+				}
+			} catch (err) {
+				// Ignore errors
+			}
+		}
+
+		const filesToScan = new Set(jsFiles);
+		for (const jsFile of filesToScan) {
+			try {
+				const jsContent = await fs.promises.readFile(jsFile, 'utf8');
+
+				// Find ES6 import statements
+				const importRegex = /import\s+.*?from\s+["']([^"']+)["']/g;
+				let match;
+
+				while ((match = importRegex.exec(jsContent)) !== null) {
+					const importPath = match[1];
+
+					// Skip node_modules and external imports
+					if (importPath.startsWith('http') || importPath.startsWith('//') || (!importPath.startsWith('/') && !importPath.startsWith('.'))) {
+						continue;
+					}
+
+					const jsDir = path.dirname(jsFile);
+					let resolvedPath: string;
+
+					if (importPath.startsWith('/')) {
+						const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+						resolvedPath = path.join(workspaceRoot || '', importPath);
+					} else {
+						resolvedPath = path.resolve(jsDir, importPath);
+					}
+
+					// Try different extensions
+					for (const ext of jsExtensions) {
+						let testPath = resolvedPath;
+						if (!path.extname(resolvedPath)) {
+							testPath = resolvedPath + `.${ext}`;
+						}
+
+						if ((await this.fileExists(testPath)) && !jsFiles.has(testPath)) {
+							jsFiles.add(testPath);
+							filesToScan.add(testPath); // Also scan this new file for more imports
 						}
 					}
 				}
