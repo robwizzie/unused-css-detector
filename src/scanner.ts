@@ -1,6 +1,3 @@
-// ============================================================================
-// FILE: src/scanner.ts (COMPLETE & FIXED)
-// ============================================================================
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -227,9 +224,9 @@ export class CSSScanner {
 					continue;
 				}
 
-				// Skip if it looks like a hex color (3 or 6 hex digits)
-				if (idName.match(/^[0-9a-fA-F]{3}$/) || idName.match(/^[0-9a-fA-F]{6}$/)) {
-					continue;
+				// Skip if it looks like a hex color (any length of hex digits)
+				if (idName.match(/^[0-9a-fA-F]+$/)) {
+				  continue;
 				}
 
 				selectors.push({
@@ -366,33 +363,36 @@ export class CSSScanner {
 		const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 		if (selector.type === 'class') {
-			const patterns = [
-				// Direct class usage patterns
-				new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
-				new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
-				new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
-
-				// jQuery
-				new RegExp(`\\$\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
-
-				// React/JSX className
-				new RegExp(`className=\\{?["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]\\}?`, 'g'),
-
-				// String literals (any quote type)
-				new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
-
-				// setAttribute
-				new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g'),
-
-				// ⭐ KEY FIX: HTML class attribute in any string (including template literals)
-				// This catches: class="nav__logo" or class='nav__logo' anywhere in the file
-				new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
-
-				// ⭐ Also match with spaces/newlines in template literals
-				new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
-			];
-
-			return patterns.some(p => p.test(content));
+		  const patterns = [
+		    // Direct class usage patterns
+		    new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
+		    new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
+		    
+		    // className = "stat-brain some-other-class"
+		    new RegExp(`className\\s*=\\s*["'\`]${escapedName}[\\s"'\`]`, 'gi'),
+		    
+		    new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
+		    
+		    // jQuery
+		    new RegExp(`\\$\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
+		    
+		    // React/JSX className
+		    new RegExp(`className=\\{?["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]\\}?`, 'g'),
+		    
+		    // String literals (any quote type)
+		    new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
+		    
+		    // setAttribute
+		    new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g'),
+		    
+		    // HTML class attribute in any string (including template literals)
+		    new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
+		    
+		    // Also match with spaces/newlines in template literals
+		    new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
+		  ];
+		  
+		  return patterns.some(p => p.test(content));
 		} else {
 			// ID selectors
 			const patterns = [
