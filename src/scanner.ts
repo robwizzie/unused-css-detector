@@ -209,12 +209,6 @@ export class CSSScanner {
 					continue;
 				}
 
-				// Check if it's followed by a pseudo-class or pseudo-element
-				const afterMatch = line.substring(match.index + match[0].length);
-				if (afterMatch.match(/^(::|:)/)) {
-					continue;
-				}
-
 				// Skip if it looks like a CSS value (has units)
 				if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms|fr)$/)) {
 					continue;
@@ -238,11 +232,6 @@ export class CSSScanner {
 
 				// Skip if inside a comment on this line
 				if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
-					continue;
-				}
-
-				const afterMatch = line.substring(match.index + match[0].length);
-				if (afterMatch.match(/^(::|:)/)) {
 					continue;
 				}
 
