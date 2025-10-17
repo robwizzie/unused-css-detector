@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { CSSScanner } from './scanner';
 import { ResultsPanel } from './resultsPanel';
 import { CSSRemover } from './remover';
+import { IgnoreManager } from './ignoreManager';
 
 let outputChannel: vscode.OutputChannel;
 let scanner: CSSScanner;
@@ -117,12 +118,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (detail) {
 				const md = new vscode.MarkdownString();
+				md.isTrusted = true; // Allow command links
 				md.appendMarkdown(`### ⚠️ Potentially Unused ${detail.type === 'class' ? 'Class' : 'ID'}\n\n`);
 				md.appendMarkdown(`**Confidence:** ${detail.confidence}\n\n`);
 				md.appendMarkdown(`**Files Checked:**\n`);
 				md.appendMarkdown(`- ${detail.filesChecked.htmlFiles} HTML files\n`);
 				md.appendMarkdown(`- ${detail.filesChecked.jsFiles} JavaScript/PHP files\n\n`);
 				md.appendMarkdown(`**Reason:** ${detail.reason}\n\n`);
+				md.appendMarkdown(`[Ignore this selector](command:unused-css-detector.ignoreSelector?${encodeURIComponent(JSON.stringify([{ message: `Unused ${detail.type}: "${detail.selector}"` }]))})`);
 
 				return new vscode.Hover(md);
 			}
@@ -130,6 +133,114 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(hoverProvider);
+
+	// Register code action provider for quick fixes
+	const codeActionProvider = vscode.languages.registerCodeActionsProvider(['css', 'scss', 'sass', 'less'], {
+		provideCodeActions(document, range, context) {
+			const codeActions: vscode.CodeAction[] = [];
+
+			// Find diagnostics at this location
+			for (const diagnostic of context.diagnostics) {
+				if (diagnostic.source !== 'Unused CSS Detector') continue;
+
+				// Extract selector from diagnostic message
+				const match = diagnostic.message.match(/Unused (?:class|id): "([^"]+)"/);
+				if (!match) continue;
+
+				const selector = match[1];
+
+				// Create "Ignore" action
+				const ignoreAction = new vscode.CodeAction(`Ignore "${selector}"`, vscode.CodeActionKind.QuickFix);
+				ignoreAction.command = {
+					title: 'Ignore Selector',
+					command: 'unused-css-detector.ignoreSelector',
+					arguments: [diagnostic]
+				};
+				ignoreAction.diagnostics = [diagnostic];
+				ignoreAction.isPreferred = false;
+
+				codeActions.push(ignoreAction);
+			}
+
+			return codeActions;
+		}
+	});
+
+	context.subscriptions.push(codeActionProvider);
+
+	// Command: Ignore Selector
+	const ignoreSelector = vscode.commands.registerCommand('unused-css-detector.ignoreSelector', async (diagnostic: vscode.Diagnostic) => {
+		if (!diagnostic) {
+			vscode.window.showErrorMessage('No selector to ignore');
+			return;
+		}
+
+		// Extract selector name from diagnostic message
+		const match = diagnostic.message.match(/Unused (?:class|id): "([^"]+)"/);
+		if (!match) {
+			vscode.window.showErrorMessage('Could not extract selector name');
+			return;
+		}
+
+		const selector = match[1];
+		const added = await IgnoreManager.addIgnoredSelector(selector);
+
+		if (added) {
+			vscode.window.showInformationMessage(`Ignoring CSS selector: ${selector}`);
+
+			// Clear diagnostics for this selector
+			const editor = vscode.window.activeTextEditor;
+			if (editor) {
+				const currentDiagnostics = diagnosticCollection.get(editor.document.uri) || [];
+				const filtered = currentDiagnostics.filter(d => !d.message.includes(`"${selector}"`));
+				diagnosticCollection.set(editor.document.uri, filtered);
+			}
+		} else {
+			vscode.window.showInformationMessage(`Selector already ignored: ${selector}`);
+		}
+	});
+
+	// Command: Manage Ignored Selectors
+	const manageIgnored = vscode.commands.registerCommand('unused-css-detector.manageIgnoredSelectors', async () => {
+		const ignored = IgnoreManager.getIgnoredSelectors();
+
+		if (ignored.length === 0) {
+			vscode.window.showInformationMessage('No ignored selectors');
+			return;
+		}
+
+		const items = ignored.map(selector => ({
+			label: selector,
+			description: 'Click to un-ignore',
+			selector
+		}));
+
+		items.push({
+			label: '$(trash) Clear All Ignored Selectors',
+			description: 'Remove all ignored selectors',
+			selector: '__clear_all__'
+		});
+
+		const selected = await vscode.window.showQuickPick(items, {
+			placeHolder: 'Select a selector to un-ignore, or clear all'
+		});
+
+		if (!selected) return;
+
+		if (selected.selector === '__clear_all__') {
+			const confirm = await vscode.window.showWarningMessage('Clear all ignored selectors?', 'Yes', 'No');
+
+			if (confirm === 'Yes') {
+				await IgnoreManager.clearAll();
+				vscode.window.showInformationMessage('Cleared all ignored selectors');
+			}
+		} else {
+			await IgnoreManager.removeIgnoredSelector(selected.selector);
+			vscode.window.showInformationMessage(`Un-ignored: ${selected.selector}`);
+		}
+	});
+
+	context.subscriptions.push(ignoreSelector, manageIgnored);
 }
 
 async function scanFile(editor: vscode.TextEditor) {

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IgnoreManager } from './ignoreManager';
 
 export interface SelectorInfo {
 	name: string;
@@ -171,105 +172,105 @@ export class CSSScanner {
 	}
 
 	private extractSelectorsFromCSS(cssContent: string, filePath: string): SelectorInfo[] {
-	  const selectors: SelectorInfo[] = [];
-	  
-	  // DON'T remove comments or modify content - work with original
-	  const originalContent = cssContent;
-	  const lines = originalContent.split('\n');
-	  
-	  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-	    const line = lines[lineNum];
-	    const lineStartOffset = lines.slice(0, lineNum).join('\n').length + (lineNum > 0 ? 1 : 0);
-	    
-	    // Skip lines that are inside comments
-	    const beforeLine = lines.slice(0, lineNum).join('\n');
-	    const openComments = (beforeLine.match(/\/\*/g) || []).length;
-	    const closeComments = (beforeLine.match(/\*\//g) || []).length;
-	    const isInComment = openComments > closeComments;
-	    
-	    // Also check if this specific line has a comment
-	    const lineCommentStart = line.indexOf('/*');
-	    const lineCommentEnd = line.indexOf('*/');
-	    
-	    if (isInComment && lineCommentEnd === -1) {
-	      continue; // Skip lines inside multi-line comments
-	    }
-	    
-	    // Match class selectors
-	    const classRegex = /(^|[\s,{>\+~])\.([a-zA-Z_][\w-]*)/g;
-	    let match;
-	    
-	    while ((match = classRegex.exec(line)) !== null) {
-	      const className = match[2];
-	      const matchStart = match.index + match[1].length; // Position of the dot
-	      
-	      // Skip if inside a comment on this line
-	      if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
-	        continue;
-	      }
-	      
-	      // Check if it's followed by a pseudo-class or pseudo-element
-	      const afterMatch = line.substring(match.index + match[0].length);
-	      if (afterMatch.match(/^(::|:)/)) {
-	        continue;
-	      }
-	      
-	      // Skip if it looks like a CSS value (has units)
-	      if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms|fr)$/)) {
-	        continue;
-	      }
-	      
-	      selectors.push({
-	        name: className,
-	        type: 'class',
-	        line: lineNum + 1,
-	        column: matchStart,
-	        fullSelector: '.' + className
-	      });
-	    }
-	    
-	    // Match ID selectors
-	    const idRegex = /(^|[\s,{>\+~])#([a-zA-Z_][\w-]+)/g;
-	    
-	    while ((match = idRegex.exec(line)) !== null) {
-	      const idName = match[2];
-	      const matchStart = match.index + match[1].length; // Position of the hash
-	      
-	      // Skip if inside a comment on this line
-	      if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
-	        continue;
-	      }
-	      
-	      const afterMatch = line.substring(match.index + match[0].length);
-	      if (afterMatch.match(/^(::|:)/)) {
-	        continue;
-	      }
-	      
-	      // Skip if it looks like a hex color (any length of hex digits)
-	      if (idName.match(/^[0-9a-fA-F]+$/)) {
-	        continue;
-	      }
-	      
-	      selectors.push({
-	        name: idName,
-	        type: 'id',
-	        line: lineNum + 1,
-	        column: matchStart,
-	        fullSelector: '#' + idName
-	      });
-	    }
-	  }
-	  
-	  // Remove duplicates
-	  const unique = new Map<string, SelectorInfo>();
-	  for (const sel of selectors) {
-	    const key = `${sel.type}-${sel.name}`;
-	    if (!unique.has(key)) {
-	      unique.set(key, sel);
-	    }
-	  }
-	  
-	  return Array.from(unique.values());
+		const selectors: SelectorInfo[] = [];
+
+		// DON'T remove comments or modify content - work with original
+		const originalContent = cssContent;
+		const lines = originalContent.split('\n');
+
+		for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+			const line = lines[lineNum];
+			const lineStartOffset = lines.slice(0, lineNum).join('\n').length + (lineNum > 0 ? 1 : 0);
+
+			// Skip lines that are inside comments
+			const beforeLine = lines.slice(0, lineNum).join('\n');
+			const openComments = (beforeLine.match(/\/\*/g) || []).length;
+			const closeComments = (beforeLine.match(/\*\//g) || []).length;
+			const isInComment = openComments > closeComments;
+
+			// Also check if this specific line has a comment
+			const lineCommentStart = line.indexOf('/*');
+			const lineCommentEnd = line.indexOf('*/');
+
+			if (isInComment && lineCommentEnd === -1) {
+				continue; // Skip lines inside multi-line comments
+			}
+
+			// Match class selectors
+			const classRegex = /(^|[\s,{>\+~])\.([a-zA-Z_][\w-]*)/g;
+			let match;
+
+			while ((match = classRegex.exec(line)) !== null) {
+				const className = match[2];
+				const matchStart = match.index + match[1].length; // Position of the dot
+
+				// Skip if inside a comment on this line
+				if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
+					continue;
+				}
+
+				// Check if it's followed by a pseudo-class or pseudo-element
+				const afterMatch = line.substring(match.index + match[0].length);
+				if (afterMatch.match(/^(::|:)/)) {
+					continue;
+				}
+
+				// Skip if it looks like a CSS value (has units)
+				if (className.match(/^\d/) || className.match(/(rem|px|em|vh|vw|deg|s|ms|fr)$/)) {
+					continue;
+				}
+
+				selectors.push({
+					name: className,
+					type: 'class',
+					line: lineNum + 1,
+					column: matchStart,
+					fullSelector: '.' + className
+				});
+			}
+
+			// Match ID selectors
+			const idRegex = /(^|[\s,{>\+~])#([a-zA-Z_][\w-]+)/g;
+
+			while ((match = idRegex.exec(line)) !== null) {
+				const idName = match[2];
+				const matchStart = match.index + match[1].length; // Position of the hash
+
+				// Skip if inside a comment on this line
+				if (lineCommentStart !== -1 && matchStart > lineCommentStart && (lineCommentEnd === -1 || matchStart < lineCommentEnd)) {
+					continue;
+				}
+
+				const afterMatch = line.substring(match.index + match[0].length);
+				if (afterMatch.match(/^(::|:)/)) {
+					continue;
+				}
+
+				// Skip if it looks like a hex color (any length of hex digits)
+				if (idName.match(/^[0-9a-fA-F]+$/)) {
+					continue;
+				}
+
+				selectors.push({
+					name: idName,
+					type: 'id',
+					line: lineNum + 1,
+					column: matchStart,
+					fullSelector: '#' + idName
+				});
+			}
+		}
+
+		// Remove duplicates
+		const unique = new Map<string, SelectorInfo>();
+		for (const sel of selectors) {
+			const key = `${sel.type}-${sel.name}`;
+			if (!unique.has(key)) {
+				unique.set(key, sel);
+			}
+		}
+
+		return Array.from(unique.values());
 	}
 
 	private shouldSkipSelector(selector: SelectorInfo): boolean {
@@ -277,6 +278,10 @@ export class CSSScanner {
 		const ignorePrefixes = config.get<string[]>('ignorePrefixes', []);
 		const ignoreUtility = config.get<boolean>('ignoreUtilityFrameworks', true);
 		const tailwindSupport = config.get<boolean>('tailwindSupport', true);
+
+		if (IgnoreManager.isIgnored(selector.name)) {
+			return true;
+		}
 
 		// Check ignore prefixes
 		for (const prefix of ignorePrefixes) {
@@ -384,36 +389,42 @@ export class CSSScanner {
 		const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 		if (selector.type === 'class') {
-		  const patterns = [
-		    // Direct class usage patterns
-		    new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
-		    new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
-		    
-		    // className = "stat-brain some-other-class"
-		    new RegExp(`className\\s*=\\s*["'\`]${escapedName}[\\s"'\`]`, 'gi'),
-		    
-		    new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
-		    
-		    // jQuery
-		    new RegExp(`\\$\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
-		    
-		    // React/JSX className
-		    new RegExp(`className=\\{?["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]\\}?`, 'g'),
-		    
-		    // String literals (any quote type)
-		    new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
-		    
-		    // setAttribute
-		    new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g'),
-		    
-		    // HTML class attribute in any string (including template literals)
-		    new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
-		    
-		    // Also match with spaces/newlines in template literals
-		    new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
-		  ];
-		  
-		  return patterns.some(p => p.test(content));
+			const patterns = [
+				// Direct class usage patterns
+				new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
+				new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
+
+				// className = "stat-brain some-other-class"
+				new RegExp(`className\\s*=\\s*["'\`]${escapedName}[\\s"'\`]`, 'gi'),
+
+				new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
+
+				// jQuery
+				new RegExp(`\\$\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
+
+				// React/JSX className
+				new RegExp(`className=\\{?["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]\\}?`, 'g'),
+
+				// String literals (any quote type)
+				new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
+
+				// ⭐ NEW: Variable containing class name (for dynamic class assignment)
+				// Matches: const outOfStockClass = ... ' out-of-stock'
+				// or: const cls = 'my-class'
+				new RegExp(`\\b${escapedName}\\b['"]`, 'gi'),
+				new RegExp(`['"]\\s*${escapedName}\\s*['"]`, 'gi'),
+
+				// setAttribute
+				new RegExp(`setAttribute\\(['"]\s*class\s*['"][^)]*\\b${escapedName}\\b[^)]*\\)`, 'g'),
+
+				// HTML class attribute in any string (including template literals)
+				new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
+
+				// Also match with spaces/newlines in template literals
+				new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
+			];
+
+			return patterns.some(p => p.test(content));
 		} else {
 			// ID selectors
 			const patterns = [
@@ -421,7 +432,7 @@ export class CSSScanner {
 				new RegExp(`querySelector\\(['"]#${escapedName}['"]\\)`, 'g'),
 				new RegExp(`\\$\\(['"]#${escapedName}['"]\\)`, 'g'),
 
-				// ⭐ KEY FIX: HTML id attribute in any string
+				// HTML id attribute in any string
 				new RegExp(`id=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
 				new RegExp(`id=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
 			];
