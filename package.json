@@ -2,7 +2,7 @@
 	"name": "unused-css-detector",
 	"displayName": "Unused CSS Detector",
 	"description": "Find and remove unused CSS by checking HTML files that link to your CSS and their associated JavaScript files",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"publisher": "robwizzie",
 	"author": {
 		"name": "Rob Wiscount",
