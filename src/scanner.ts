@@ -39,6 +39,7 @@ export interface ScanResults {
 export class CSSScanner {
 	private lastResults: ScanResults | null = null;
 	private cache: Map<string, boolean> = new Map();
+	private fileContentCache: Map<string, string> = new Map();
 	private dynamicPatterns: Set<string> = new Set();
 
 	constructor(private outputChannel: vscode.OutputChannel) {}
@@ -79,7 +80,35 @@ export class CSSScanner {
 		progress.report({ increment: 50, message: 'Step 3/4: Finding linked JavaScript files...' });
 
 		const jsFiles = await this.findJSFilesFromHTML(htmlFiles);
-		this.outputChannel.appendLine(`Found ${jsFiles.length} JavaScript files`);
+		this.outputChannel.appendLine(`Found ${jsFiles.length} JavaScript files from HTML`);
+
+		// Also scan all project JS/TS files to catch usage in files not linked from HTML
+		// (e.g., React/Vue/Angular components that import CSS directly via bundlers)
+		const allProjectJSFiles = await this.findAllProjectJSFiles();
+		const jsFileSet = new Set(jsFiles);
+		for (const f of allProjectJSFiles) {
+			if (!jsFileSet.has(f)) {
+				jsFiles.push(f);
+				jsFileSet.add(f);
+			}
+		}
+
+		// Find component files (Vue, Svelte, Astro) - these contain both
+		// HTML templates and JS, so check them with both pattern sets
+		const componentFiles = await this.findComponentFiles();
+		const htmlFileSet = new Set(htmlFiles);
+		for (const f of componentFiles) {
+			if (!htmlFileSet.has(f)) {
+				htmlFiles.push(f);
+				htmlFileSet.add(f);
+			}
+			if (!jsFileSet.has(f)) {
+				jsFiles.push(f);
+				jsFileSet.add(f);
+			}
+		}
+
+		this.outputChannel.appendLine(`Total files to check: ${htmlFiles.length} HTML/template + ${jsFiles.length} JS/TS`);
 
 		if (token.isCancellationRequested) return this.createEmptyResults(cssFilePath);
 
@@ -323,12 +352,16 @@ export class CSSScanner {
 					return { found: true, confidence: 'high', reason: 'Found in HTML' };
 				}
 			} else {
-				const content = await fs.promises.readFile(htmlFile, 'utf8');
-				const found = this.findInHTML(selector, content);
-				this.cache.set(cacheKey, found);
+				try {
+					const content = await this.readFileContent(htmlFile);
+					const found = this.findInHTML(selector, content);
+					this.cache.set(cacheKey, found);
 
-				if (found) {
-					return { found: true, confidence: 'high', reason: 'Found in HTML' };
+					if (found) {
+						return { found: true, confidence: 'high', reason: 'Found in HTML' };
+					}
+				} catch (err) {
+					// Skip unreadable files
 				}
 			}
 		}
@@ -342,12 +375,16 @@ export class CSSScanner {
 					return { found: true, confidence: 'high', reason: 'Found in JavaScript' };
 				}
 			} else {
-				const content = await fs.promises.readFile(jsFile, 'utf8');
-				const found = this.findInJS(selector, content);
-				this.cache.set(cacheKey, found);
+				try {
+					const content = await this.readFileContent(jsFile);
+					const found = this.findInJS(selector, content);
+					this.cache.set(cacheKey, found);
 
-				if (found) {
-					return { found: true, confidence: 'high', reason: 'Found in JavaScript' };
+					if (found) {
+						return { found: true, confidence: 'high', reason: 'Found in JavaScript' };
+					}
+				} catch (err) {
+					// Skip unreadable files
 				}
 			}
 		}
@@ -364,12 +401,37 @@ export class CSSScanner {
 		const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 		if (selector.type === 'class') {
-			const patterns = [new RegExp(`class=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'), new RegExp(`className=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'), new RegExp(`:class=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'), new RegExp(`class:${escapedName}`, 'i')];
+			const patterns = [
+				// Standard HTML class attribute
+				new RegExp(`class=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'),
+				// React className
+				new RegExp(`className=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'),
+				// Vue :class / v-bind:class (string syntax)
+				new RegExp(`:class=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'),
+				// Vue v-bind:class
+				new RegExp(`v-bind:class=["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'),
+				// Svelte class:directive
+				new RegExp(`class:${escapedName}\\b`, 'i'),
+				// Angular [ngClass] with object or string syntax
+				new RegExp(`\\[ngClass\\]\\s*=\\s*["'][^"']*\\b${escapedName}\\b[^"']*["']`, 'i'),
+				// Angular [class.name] binding
+				new RegExp(`\\[class\\.${escapedName}\\]`, 'i'),
+				// Vue/Angular dynamic class in object syntax: {active: condition}
+				new RegExp(`class=["'][^"']*\\{[^}]*\\b${escapedName}\\b\\s*:`, 'i'),
+				// Class in template expressions: :class="[condition ? 'active' : '']"
+				new RegExp(`:class=["'][^"']*['"]${escapedName}['"][^"']*["']`, 'i')
+			];
 
 			return patterns.some(p => p.test(content));
 		} else {
-			const idPattern = new RegExp(`id=["']${escapedName}["']`, 'i');
-			return idPattern.test(content);
+			const patterns = [
+				// Standard id attribute
+				new RegExp(`id=["']${escapedName}["']`, 'i'),
+				// Dynamic id binding (Vue/Angular)
+				new RegExp(`:id=["']${escapedName}["']`, 'i'),
+				new RegExp(`\\[id\\]\\s*=\\s*["']${escapedName}["']`, 'i')
+			];
+			return patterns.some(p => p.test(content));
 		}
 	}
 
@@ -379,13 +441,16 @@ export class CSSScanner {
 
 		if (selector.type === 'class') {
 			const patterns = [
-				// Direct class usage patterns
-				new RegExp(`classList\\.(add|remove|toggle|contains)\\(['"]\s*${escapedName}\s*['"]\\)`, 'g'),
+				// classList.add/remove/toggle/contains - supports multiple arguments
+				new RegExp(`classList\\.(add|remove|toggle|contains)\\([^)]*['"]${escapedName}['"][^)]*\\)`, 'g'),
+
+				// className assignment: className = "foo bar", className += "foo"
 				new RegExp(`className\\s*[=+]=\\s*["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'g'),
 
 				// className = "stat-brain some-other-class"
 				new RegExp(`className\\s*=\\s*["'\`]${escapedName}[\\s"'\`]`, 'gi'),
 
+				// querySelector/querySelectorAll
 				new RegExp(`querySelector(All)?\\(['"]\s*\\.${escapedName}\\b[^)]*['"]\\)`, 'g'),
 
 				// jQuery
@@ -397,9 +462,7 @@ export class CSSScanner {
 				// String literals (any quote type)
 				new RegExp(`["'\`]${escapedName}["'\`]`, 'g'),
 
-				// ⭐ NEW: Variable containing class name (for dynamic class assignment)
-				// Matches: const outOfStockClass = ... ' out-of-stock'
-				// or: const cls = 'my-class'
+				// Variable containing class name
 				new RegExp(`\\b${escapedName}\\b['"]`, 'gi'),
 				new RegExp(`['"]\\s*${escapedName}\\s*['"]`, 'gi'),
 
@@ -409,8 +472,22 @@ export class CSSScanner {
 				// HTML class attribute in any string (including template literals)
 				new RegExp(`class=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
 
-				// Also match with spaces/newlines in template literals
-				new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
+				// Template literals with class attribute (longer content)
+				new RegExp(`class=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi'),
+
+				// clsx/classnames/cn/cx/twMerge - string arguments
+				new RegExp(`(?:clsx|classnames|cn|cx|twMerge|twJoin)\\([^)]*['"\`]${escapedName}['"\`]`, 'g'),
+
+				// clsx/classnames with object keys: clsx({active: condition}) or clsx({'my-class': cond})
+				new RegExp(`(?:clsx|classnames|cn|cx|twMerge|twJoin)\\([^)]*\\{[^}]*\\b${escapedName}\\b\\s*:`, 'g'),
+
+				// CSS Modules: styles.className, classes.myClass, etc.
+				new RegExp(`(?:styles|classes|css|cls|style|cssModule|cssModules)\\.${escapedName}\\b`, 'g'),
+				// CSS Modules bracket notation: styles['my-class']
+				new RegExp(`(?:styles|classes|css|cls|style|cssModule|cssModules)\\[['"\`]${escapedName}['"\`]\\]`, 'g'),
+
+				// Angular [ngClass] in templates embedded in JS (e.g., inline templates)
+				new RegExp(`ngClass[^"'\`>]*\\b${escapedName}\\b`, 'gi')
 			];
 
 			return patterns.some(p => p.test(content));
@@ -418,12 +495,15 @@ export class CSSScanner {
 			// ID selectors
 			const patterns = [
 				new RegExp(`getElementById\\(['"]${escapedName}['"]\\)`, 'g'),
-				new RegExp(`querySelector\\(['"]#${escapedName}['"]\\)`, 'g'),
+				new RegExp(`querySelector(All)?\\(['"]#${escapedName}['"]\\)`, 'g'),
 				new RegExp(`\\$\\(['"]#${escapedName}['"]\\)`, 'g'),
 
 				// HTML id attribute in any string
 				new RegExp(`id=["'\`][^"'\`]*\\b${escapedName}\\b[^"'\`]*["'\`]`, 'gi'),
-				new RegExp(`id=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi')
+				new RegExp(`id=["'\`][^"'\`]{0,500}${escapedName}[^"'\`]{0,500}["'\`]`, 'gi'),
+
+				// getElementById variations and document.getElementById
+				new RegExp(`\\bid\\s*[:=]\\s*['"\`]${escapedName}['"\`]`, 'gi')
 			];
 
 			return patterns.some(p => p.test(content));
@@ -673,6 +753,47 @@ export class CSSScanner {
 		return Array.from(jsFiles);
 	}
 
+	private async readFileContent(filePath: string): Promise<string> {
+		if (this.fileContentCache.has(filePath)) {
+			return this.fileContentCache.get(filePath)!;
+		}
+		const content = await fs.promises.readFile(filePath, 'utf8');
+		this.fileContentCache.set(filePath, content);
+		return content;
+	}
+
+	private async findAllProjectJSFiles(): Promise<string[]> {
+		const config = vscode.workspace.getConfiguration('unusedCssDetector');
+		const excludePatterns = config.get<string[]>('excludePaths', []);
+		const scanFileTypes = config.get<string[]>('scanFileTypes', ['html', 'htm', 'js', 'jsx', 'ts', 'tsx', 'php', 'mjs', 'vue', 'svelte', 'astro']);
+		const jsTypes = scanFileTypes.filter(ext => ['js', 'jsx', 'ts', 'tsx', 'mjs'].includes(ext));
+
+		if (jsTypes.length === 0) return [];
+
+		const files = await vscode.workspace.findFiles(
+			`**/*.{${jsTypes.join(',')}}`,
+			`{${excludePatterns.join(',')}}`
+		);
+
+		return files.map(f => f.fsPath);
+	}
+
+	private async findComponentFiles(): Promise<string[]> {
+		const config = vscode.workspace.getConfiguration('unusedCssDetector');
+		const excludePatterns = config.get<string[]>('excludePaths', []);
+		const scanFileTypes = config.get<string[]>('scanFileTypes', ['html', 'htm', 'js', 'jsx', 'ts', 'tsx', 'php', 'mjs', 'vue', 'svelte', 'astro']);
+		const componentTypes = scanFileTypes.filter(ext => ['vue', 'svelte', 'astro'].includes(ext));
+
+		if (componentTypes.length === 0) return [];
+
+		const files = await vscode.workspace.findFiles(
+			`**/*.{${componentTypes.join(',')}}`,
+			`{${excludePatterns.join(',')}}`
+		);
+
+		return files.map(f => f.fsPath);
+	}
+
 	private async fileExists(filePath: string): Promise<boolean> {
 		try {
 			await fs.promises.access(filePath);
@@ -714,6 +835,7 @@ export class CSSScanner {
 
 	clearCache(): void {
 		this.cache.clear();
+		this.fileContentCache.clear();
 		this.dynamicPatterns.clear();
 	}
 }
